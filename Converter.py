@@ -8,8 +8,7 @@ def convert_image(img_data, img_swidth, img_height, img_awidth, bpp, has_palette
 	if bpp == 1:
 		colors = [RGB565(255,255,255), RGB565(0,0,0)]
 	elif bpp == 2:
-		colors = [RGB565(0,0,0), RGB565(128,128,128), 
-				 RGB565(192,192,192), RGB565(255,255,255)]
+		colors = [RGB565(255,255,255), RGB565(192,192,192), RGB565(128,128,128), RGB565(0,0,0)]
 	elif bpp == 4:
 		colors = [
 			RGB565(0,0,0),		# BLACK
@@ -47,8 +46,8 @@ def convert_image(img_data, img_swidth, img_height, img_awidth, bpp, has_palette
 				rgb565 = colors[pixel_value]
 				
 				out_pos = (y * img_awidth + x) * 2
-				output[out_pos] = rgb565 >> 8
-				output[out_pos + 1] = rgb565 & 0xFF
+				output[out_pos] = rgb565 & 0xFF
+				output[out_pos + 1] = (rgb565>>8) & 0xff
 				
 		elif bpp == 8:
 			for x in range(img_awidth):
