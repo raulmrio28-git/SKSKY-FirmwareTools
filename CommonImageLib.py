@@ -4,8 +4,11 @@ import io
 from enum import Enum
 import construct
 import re
-#import ImageRLE
-#import ImageLZB
+import RLE
+import LZB
+import Converter
+from PIL import Image
+import os
 
 DEBUG = False
 
@@ -55,7 +58,7 @@ ANIMATION_HEADER = construct.Struct(
 
 my_imgSrcData = bytes()
 my_imgOffset = list()
-my_imgArray = list()
+my_imgFrames = int()
 
 class CommonImageLib_Types(Enum):
 	TYPE_UNKNOWN = 0
@@ -67,7 +70,7 @@ class CommonImageLib_PackTypes(Enum):
 	PTYPE_RAW = 1
 	PTYPE_RLE = 2
 	PTYPE_LZB = 3
-		
+
 def find_image_offsets(data: bytes) -> list:
 	pattern = rb'(?:IMG|ANI|XMG|XNI|ZMG|ZNI)\x00'
 	
@@ -83,7 +86,10 @@ class CommonImageLib():
 		with open(filename, 'rb') as f:
 			self.my_imgSrcData = f.read()
 		
+		self.my_imgArray = []
 		self.my_imgOffset = find_image_offsets(self.my_imgSrcData)
+		self.isAnimation = False
+		self.decImage = 0
 		if DEBUG:
 			for a in range(self.GetNumberOfImages()):
 				print(f"Found an {self.my_imgSrcData[self.my_imgOffset[a]:self.my_imgOffset[a]+4].decode()} at offset: {self.my_imgOffset[a]}")
@@ -107,10 +113,12 @@ class CommonImageLib():
 			self.my_imgType = CommonImageLib_Types.TYPE_IMAGE
 
 	def IsValid(self, image: int) -> bool:
+		work_offset = self.my_imgOffset[image]
+		
 		if (image >= len(self.my_imgOffset)):
 			print(f"Image over range - you've chosen image {image+1} but there are {len(self.my_imgOffset)} images")
 			return False
-		img_hdr = BITMAP_HEADER.parse(self.my_imgSrcData[self.my_imgOffset[image]:])
+		img_hdr = BITMAP_HEADER.parse(self.my_imgSrcData[work_offset:])
 
 		magic = "".join(chr(b) for b in img_hdr.abID[:3])
 		valid_magic = {"IMG", "ANI", "XMG", "XNI", "ZMG", "ZNI"}
@@ -127,12 +135,19 @@ class CommonImageLib():
 			return False
 		
 		self.GetType(magic)
+		work_offset += BITMAP_HEADER.sizeof()
 		
 		if self.my_imgType == CommonImageLib_Types.TYPE_ANIMATION:
-			anim_hdr = ANIMATION_HEADER.parse(self.my_imgSrcData[self.my_imgOffset[image]+BITMAP_HEADER.sizeof():])
+			anim_hdr = ANIMATION_HEADER.parse(self.my_imgSrcData[work_offset:])
 			if not (0 < anim_hdr.nFrame <= 255):
 				print(f"Invalid frame count: {anim_hdr.nFrame}")
 				return False
+			work_offset += ANIMATION_HEADER.sizeof()
+		data_offset = struct.unpack("<L", self.my_imgSrcData[work_offset:work_offset+4])[0]
+
+		if data_offset == 0:
+			print(f"Invalid offset")
+			return False
 		
 		return True
 	
@@ -174,12 +189,13 @@ class CommonImageLib():
 			work_offset += ANIMATION_HEADER.sizeof()
 		data_offset = struct.unpack("<L", self.my_imgSrcData[work_offset:work_offset+4])
 		
-	def Get(self, image: int):
+	def Decode(self, image: int):
 		work_offset = self.my_imgOffset[image]
 		
 		if (image >= len(self.my_imgOffset)):
 			print(f"Image over range - you've chosen image {image+1} but there are {len(self.my_imgOffset)} images")
 			return
+		self.decImage = image
 		img_hdr = BITMAP_HEADER.parse(self.my_imgSrcData[work_offset:])
 		magic = "".join(chr(b) for b in img_hdr.abID[:3])
 		
@@ -189,8 +205,49 @@ class CommonImageLib():
 		work_offset += BITMAP_HEADER.sizeof()
 		if self.my_imgType == CommonImageLib_Types.TYPE_ANIMATION:
 			anim_hdr = ANIMATION_HEADER.parse(self.my_imgSrcData[work_offset:])
-			frames = animhdr.nFrame
+			self.my_imgFrames = anim_hdr.nFrame
+			self.my_imgDelay = anim_hdr.awDelayTime
 			work_offset += ANIMATION_HEADER.sizeof()
+			self.isAnimation = True
 		else:
-			frames = 1
-		data_offset = struct.unpack("<L", self.my_imgSrcData[work_offset:work_offset+4])
+			self.my_imgFrames = 1
+			self.isAnimation = False
+		data_offset = struct.unpack("<L", self.my_imgSrcData[work_offset:work_offset+4])[0]
+		
+		work_data = self.my_imgSrcData[data_offset:]
+		frame_size = int((img_hdr.Size.xWidth*img_hdr.Size.yHeight*img_hdr.nBitsPerPixel)/8)
+		frame_data = bytearray(frame_size)
+		self.my_imgArray = []
+		print(f"Decoding image {image}")
+		for _ in range(self.my_imgFrames):
+			if self.my_imgPack == CommonImageLib_PackTypes.PTYPE_RLE:
+				data_size = struct.unpack(">H", work_data[0:2])[0]
+				work_data = work_data[2:]
+				if img_hdr.nBitsPerPixel <= 8:
+					dec_data = RLE.UnpackRLE(work_data[:data_size], frame_size)
+				else:
+					dec_data = RLE.UnpackRLE16(work_data[:data_size], frame_size)
+			else:
+				if self.my_imgPack == CommonImageLib_PackTypes.PTYPE_LZB:
+					data_size = struct.unpack(">H", work_data[0:2])[0]
+					work_data = work_data[2:]
+					if struct.unpack(">H", work_data[0:2])[0] == 0:
+						work_data = work_data[2:]
+					dec_data = LZB.LZBDecompress(work_data[:data_size])
+				else:
+					data_size = frame_size
+					dec_data = work_data[:frame_size]
+			dec_data = Converter.convert_image(dec_data, img_hdr.Size.xWidth, img_hdr.Size.yHeight, img_hdr.xWidth, img_hdr.nBitsPerPixel)
+			dec_frame = Image.frombytes("RGB", (img_hdr.xWidth, img_hdr.Size.yHeight), bytes(dec_data),"raw", "BGR;16")
+			self.my_imgArray.append(dec_frame)
+			work_data = work_data[data_size:]
+	
+	def Save(self, fn, ani_is_gif: bool):
+		if self.isAnimation == False:
+			self.my_imgArray[0].save(f"{os.path.splitext(fn)[0]}_{self.decImage}{os.path.splitext(fn)[1]}")
+		else:
+			if ani_is_gif == True:
+				self.my_imgArray[0].save(f"{os.path.splitext(fn)[0]}_{self.decImage}.gif", save_all=True, append_images=self.my_imgArray[1:], optimize=False, duration=self.my_imgDelay, loop=0, disposal=False)	
+			else:
+				for b in range(self.my_imgFrames):
+					self.my_imgArray[b].save(f"{os.path.splitext(fn)[0]}_{self.decImage}_{b}{os.path.splitext(fn)[1]}")
