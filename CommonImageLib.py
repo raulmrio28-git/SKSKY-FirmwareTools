@@ -233,7 +233,7 @@ class CommonImageLib():
 					work_data = work_data[2:]
 					if struct.unpack(">H", work_data[0:2])[0] == 0:
 						work_data = work_data[2:]
-					dec_data = LZB.LZBDecompress(work_data[:data_size])
+					dec_data = LZB.LZBDecompress(work_data[:data_size+4])
 				else:
 					data_size = frame_size
 					dec_data = work_data[:frame_size]
