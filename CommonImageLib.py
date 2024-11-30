@@ -180,6 +180,8 @@ class CommonImageLib():
 				fmt_string += "image"
 			
 		print(f"{fmt_string}, Size: {img_hdr.xWidth}x{img_hdr.Size.yHeight}, {img_hdr.nBitsPerPixel}bpp")
+		if (img_hdr.nBitsPerPixel <=8):
+			print(f"Has palette: {img_hdr.fPalette}")
 		work_offset += BITMAP_HEADER.sizeof()
 		if self.my_imgType == CommonImageLib_Types.TYPE_ANIMATION:
 			anim_hdr = ANIMATION_HEADER.parse(self.my_imgSrcData[work_offset:])
@@ -220,6 +222,7 @@ class CommonImageLib():
 		self.my_imgArray = []
 		print(f"Decoding image {image}")
 		for _ in range(self.my_imgFrames):
+			palette_data = []
 			if self.my_imgPack == CommonImageLib_PackTypes.PTYPE_RLE:
 				data_size = struct.unpack(">H", work_data[0:2])[0]
 				work_data = work_data[2:]
@@ -237,7 +240,10 @@ class CommonImageLib():
 				else:
 					data_size = frame_size
 					dec_data = work_data[:frame_size]
-			dec_data = Converter.convert_image(dec_data, img_hdr.Size.xWidth, img_hdr.Size.yHeight, img_hdr.xWidth, img_hdr.nBitsPerPixel)
+			if img_hdr.fPalette == 1:
+				palette_offset = struct.unpack("<L", self.my_imgSrcData[work_offset+4:work_offset+8])[0]
+				palette_data = self.my_imgSrcData[palette_offset:palette_offset+512]
+			dec_data = Converter.convert_image(dec_data, img_hdr.Size.xWidth, img_hdr.Size.yHeight, img_hdr.xWidth, img_hdr.nBitsPerPixel, img_hdr.fPalette, palette_data)
 			dec_frame = Image.frombytes("RGB", (img_hdr.xWidth, img_hdr.Size.yHeight), bytes(dec_data),"raw", "BGR;16")
 			self.my_imgArray.append(dec_frame)
 			work_data = work_data[data_size:]

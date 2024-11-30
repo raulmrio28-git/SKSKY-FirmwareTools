@@ -1,7 +1,7 @@
 def RGB565(r, g, b):
 	return ((r>>3)<<11) | ((g>>2)<<5) | (b>>3)
 
-def convert_image(img_data, img_swidth, img_height, img_awidth, bpp):
+def convert_image(img_data, img_swidth, img_height, img_awidth, bpp, has_palette: bool, palette_data):
 	output_size = img_awidth * img_height * 2
 	output = bytearray(output_size)
 	
@@ -54,13 +54,17 @@ def convert_image(img_data, img_swidth, img_height, img_awidth, bpp):
 			for x in range(img_awidth):
 				if y * img_swidth + x >= len(img_data):
 					continue
-					
-				pixel = img_data[y * img_swidth + x]
-				r = ((pixel>>5)&0x7)<<5
-				g = ((pixel>>2)&0x7)<<5
-				b = (pixel&0x3)<<6
 				
-				rgb565 = RGB565(r,g,b)
+				pixel = img_data[y * img_swidth + x]
+				
+				if has_palette == True:
+					rgb565 = palette_data[pixel*2+1]<<8 | palette_data[pixel*2]
+				else:
+					r = ((pixel>>5)&0x7)<<5
+					g = ((pixel>>2)&0x7)<<5
+					b = (pixel&0x3)<<6
+				
+					rgb565 = RGB565(r,g,b)
 				
 				out_pos = (y * img_awidth + x) * 2
 				output[out_pos] = rgb565 & 0xff
